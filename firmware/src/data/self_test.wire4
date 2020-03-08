@@ -1,0 +1,35 @@
+: assert . 0<> if ." ✅  PASS" else ." ❌  FAIL" then cr ;
+
+." Wire4 test:" cr cr
+1 2 + 3        =   "add   " assert
+3 2 - 1        =   "sub   " assert
+3 4 * 12       =   "mul   " assert
+12 4 / 3       =   "div   " assert
+12 24          <   "lt    " assert
+24 12          >   "gt    " assert
+12 14          <=  "lte   " assert
+12 12          <=  "lte   " assert
+12 12          >=  "gte   " assert
+14 12          >=  "gte   " assert
+0              0=  "eqz   " assert
+1              0<> "neqz  " assert
+-4             0<  "ltz   " assert
+4              0>  "gtz   " assert
+8 3 mod 2      =   "mod   " assert
+9 5 and 1      =   "and   " assert
+9 5 or 13      =   "or    " assert
+9 5 xor 12     =   "xor   " assert
+0 inc 1        =   "inc   " assert
+2 dec 1        =   "dec   " assert
+2 dup + 4      =   "dup   " assert
+1 2 over -     =   "over  " assert
+1 2 tuck *     =   "tuck  " assert
+1 2 3 rot +    =   "rot   " assert
+1 2 swap - 1   =   "swap  " assert
+1 2 3 nip + 4  =   "nip   " assert
+
+42 $x !
+$x ? -1        =   "test  " assert
+$x @ 42        =   "fetch " assert
+$x del 
+$x ? 0         =   "del   " assert

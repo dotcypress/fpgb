@@ -1,0 +1,4 @@
+{
+  "rust.all_targets": false,
+  "rust.target": "thumbv6m-none-eabi"
+}

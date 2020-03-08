@@ -1,0 +1,4 @@
+(sym_lib_table
+  (lib (name fpgb)(type Legacy)(uri ${KIPRJMOD}/fpgb.lib)(options "")(descr ""))
+  (lib (name fpgb-rescue)(type Legacy)(uri ${KIPRJMOD}/fpgb-rescue.lib)(options "")(descr ""))
+)

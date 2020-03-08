@@ -1,0 +1,12 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP CD22M3494MQ
+D 16x8x1 BiMOS-E Crosspoint Switch
+F https://www.mouser.com/datasheet/2/698/cd22m3494-1528530.pdf
+$ENDCMP
+#
+$CMP STM32G071KBTx
+D Arm® Cortex®-M0+ 32-bit MCU
+$ENDCMP
+#
+#End Doc Library

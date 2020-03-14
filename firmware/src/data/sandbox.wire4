@@ -29,11 +29,28 @@ $adc @ .
 \ : fizz-buzz? dup fizz? swap buzz? or invert ;
 \ : do-fizz-buzz 25 1 do cr i fizz-buzz? if i . then loop ;
 
-: setup ~e7 ~3V 2 #1 wire ~g7 ~d12 2 #2 wire ~g12 1 #3 wire 20 1 ; 
 : blink-once ~gnd 1 #3 wire dup delay ~gnd 1 #3 unwire delay ; 
-: blink setup do 200 blink-once loop ;
+ : setup ~e7 ~3V 2 #1 wire ~g7 ~d12 2 #2 wire ~g12 1 #3 wire 100000 1 ; : blink-once ~gnd 1 #3 wire ~gnd 1 #3 unwire ;  : blink setup do blink-once loop ;
 
 : fade 
   ~e7 ~dac 2 #1 wire ~g7 ~d12 2 #2 wire ~g12 ~gnd 2 #3 wire
   3300 2000 do i $dac ! 1 delay loop 
 ;
+
+-- red ~e6
+-- blue ~h11
+-- green ~a17
+: setup ~d8 ~3V 2 #15 wire ~d12 ~a14 ~h8 ~f4 4 #2 wire ~gnd 1 #1 wire ;
+: connect 1 #1 wire ;
+: disconnect 1 #1 unwire ;
+: wave
+  200
+  ~e6 connect
+  dup delay
+  ~e6 disconnect ~h11 connect
+  dup delay
+  ~h11 disconnect ~a17 connect
+  delay
+  ~a17 disconnect
+;
+: animate setup 100 1 setup do wave loop ;

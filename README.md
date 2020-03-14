@@ -1,6 +1,8 @@
-# FPGB
+# Forth Programmable Breadboard
 
 🚧 Work in progress. Don't try this at home. 🚧
+
+<img src="docs/fpgb.jpg" alt="Forth Programmable Breadboard" width="50%" />
 
 ## Resources
 

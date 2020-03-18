@@ -1,0 +1,14 @@
+: reset ( -- ) ; -- Reset device
+: hard-reset ( -- ) ; -- Reset device and clear EEPROM
+: adc ( -- mV ) ; -- ADC read
+: dac ( mV -- ) ;  -- DAC
+: wire ( PORTn .. PORT0 n NET -- ) ;
+: wires ( NET -- PORTn .. PORT0 n ) ;
+: unwire ( PORTn .. PORT0 n NET -- ) ;
+: version ( -- ) ; -- Print firmware version
+: status ( -- ) ; -- Print matrix status
+: help ( -- ) ; -- Print help
+: delay ( ms -- ) ; -- Delay execution
+: rec ( var -- ) ; -- Record program to EEPROM
+: cat ( var -- ) ; -- List program from EEPROM
+: eval ( var -- ) ; -- Load and eval program from EEPROM

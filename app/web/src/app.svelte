@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { RadioIcon, RefreshCwIcon } from "svelte-feather-icons";
   import Chart from "./chart.svelte";
+  import Breadboard from "./breadboard.svelte";
 
   const connection = new WebSocket(`ws://${window.location.host}/ws`);
 
@@ -204,6 +205,6 @@
     </div>
   </nav>
   <div>
-    <Chart />
+    <Breadboard />
   </div>
 </div>

@@ -48,6 +48,7 @@ dependencies = [
  "hash32",
  "heapless",
  "kvs",
+ "nb",
  "panic-halt",
  "panic-semihosting",
  "stm32g0xx-hal",

@@ -18,6 +18,7 @@ panic-halt = "0.2.0"
 panic-semihosting = "0.5.3"
 stm32g0xx-hal = { version="0.0.7", default-features = false, features = ["rt", "stm32g07x"] } 
 typenum = "1.11.2"
+nb = "0.1.1"
 wire4 = { path = "../../wire4/"}
 
 [profile.release]

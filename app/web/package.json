@@ -12,6 +12,7 @@
     "node": ">=12.6.0"
   },
   "dependencies": {
+    "@svgdotjs/svg.js": "^3.0.16",
     "bulma": "^0.8.0",
     "smoothie": "^1.35.0",
     "svelte": "^3.1.0",
@@ -30,6 +31,7 @@
     "rollup-plugin-node-resolve": "^5.2.0",
     "rollup-plugin-postcss": "^2.0.3",
     "rollup-plugin-svelte": "^5.0.3",
+    "rollup-plugin-svg": "^2.0.0",
     "rollup-plugin-terser": "^5.1.1"
   }
 }

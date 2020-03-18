@@ -1,20 +1,51 @@
 use byteorder::{BigEndian, ByteOrder};
 use core::fmt::Write;
+use nb::block;
 use wire4::*;
 
 use crate::breadboard::{self, Breadboard};
 use crate::config::*;
 use crate::hal::prelude::*;
 
-const BANNER: &str = include_str!("./data/banner.ascii");
-const SELF_TEST_PROG: &str = include_str!("./data/self_test.wire4");
+mod proc {
+    pub const VERSION: u32 = 0x1dc6_8700;
+    pub const HELP: u32 = 0xac61_5edc;
+    pub const STATUS: u32 = 0xca52_ccb5;
+    pub const HARD_RESET: u32 = 0x873f_1773;
+    pub const DELAY: u32 = 0x604d_5d99;
+    pub const REC: u32 = 0xae87_22d4;
+    pub const CAT: u32 = 0x6864_9727;
+    pub const EVAL: u32 = 0xaea0_4ff1;
+}
+
+mod vars {
+    pub const BOOT: u32 = 0x4fc8_01d0;
+    pub const AUX: u32 = 0xb436_c496;
+    pub const ADC: u32 = 0x7b63_9cfb;
+    pub const DAC: u32 = 0x322d_b04f;
+}
+
+mod shell {
+    pub const PROMT: &str = "$> ";
+    pub const CLS: &str = "\x1b[H\x1b[2J";
+    pub const DEL: &str = "\x08 \x08";
+    pub const BELL: &str = "\x07";
+    pub const KEY_BS: u8 = 0x08;
+    pub const KEY_RET: u8 = 0x0d;
+    pub const KEY_DEL: u8 = 0x7f;
+    pub const KEY_ESC: u8 = 0x1b;
+    pub const KEY_DC1: u8 = 0x11; // Ctrl+Q
+    pub const KEY_DC2: u8 = 0x12; // Ctrl+R
+    pub const KEY_DC3: u8 = 0x13; // Ctrl+S
+    pub const KEY_DC4: u8 = 0x14; // Ctrl+T
+}
 
 #[derive(Debug)]
 pub enum Error {
     VMError(VMError),
     FormatError(core::fmt::Error),
     BreadboardError(breadboard::Error),
-    SerialError(hal::nb::Error<hal::serial::Error>),
+    SerialError(hal::serial::Error),
     StoreError,
     BadInput,
     AdcError,
@@ -29,10 +60,13 @@ pub struct FPGB {
     vm: Wire4VM,
     store: EepromStore,
     bb: Breadboard,
-    buf: [u8; 256],
+    buf: [u8; 1024],
     cursor: usize,
     escape: bool,
-    connected: bool,
+    rec_var: Option<u32>,
+    serial_connected: bool,
+    promt_pending: bool,
+    hide_status: bool,
 }
 
 impl FPGB {
@@ -56,63 +90,100 @@ impl FPGB {
             serial,
             cursor: 0,
             escape: false,
-            connected: false,
-            buf: [0; 256],
+            serial_connected: false,
+            hide_status: false,
+            promt_pending: false,
+            rec_var: None,
+            buf: [0; 1024],
         }
     }
 
-    pub fn reset(&mut self, print_banner: bool) -> Result<(), Error> {
-        self.cursor = 0;
+    pub fn reset(&mut self) -> Result<(), Error> {
         self.vm.reset();
         self.bb.reset().map_err(Error::BreadboardError)?;
-        if print_banner {
-            self.print_banner()?;
+        self.rec_var = None;
+        if self.contains_var(vars::BOOT)? {
+            self.vm
+                .push(Value::Var(vars::BOOT))
+                .map_err(Error::VMError)?;
+            if let Err(err) = self.call_proc(proc::EVAL) {
+                self.vm.reset();
+                self.bb.reset().map_err(Error::BreadboardError)?;
+                write!(self.serial, "ERR: Boot failed {:?}\r\n", err)
+                    .map_err(Error::FormatError)?;
+            }
         }
         Ok(())
+    }
+
+    pub fn spin(&mut self) {
+        if let Err(err) = self.tick() {
+            self.hide_status = true;
+            write!(self.serial, "ERR: {:?}\r\n", err).expect("Serial port fault");
+        }
     }
 
     pub fn poll_serial(&mut self) {
         loop {
             match self.serial.read() {
-                Ok(byte) => match self.handle_byte(byte) {
-                    Ok(true) => {
-                        write!(self.serial, "ok{}", shell::PROMT).expect("Serial port fault");
+                Ok(byte) => {
+                    if !self.serial_connected {
+                        self.serial_connected = true;
+                        self.print_banner().expect("Serial port fault");
+                        return;
                     }
-                    Ok(_) => {}
-                    Err(err) => write!(self.serial, "ERR: {:?}{}", err, shell::PROMT)
-                        .expect("Serial port fault"),
-                },
-                Err(hal::nb::Error::WouldBlock) => {
-                    break;
+                    if let Err(err) = self.handle_byte(byte) {
+                        write!(self.serial, "ERR: {:?}\r\n", err).expect("Serial port fault");
+                    }
                 }
-                Err(err) => write!(self.serial, "ERR: {:?}{}", err, shell::PROMT)
-                    .expect("Serial port fault"),
+                Err(hal::nb::Error::WouldBlock) => {
+                    return;
+                }
+                Err(err) => {
+                    write!(self.serial, "ERR: Serial {:?}\r\n", err).expect("Serial port fault")
+                }
             }
         }
     }
 
-    fn handle_byte(&mut self, byte: u8) -> Result<bool, Error> {
-        if !self.connected {
-            self.connected = true;
-            self.print_banner()?;
-            return Ok(false);
-        }
+    fn handle_byte(&mut self, byte: u8) -> Result<(), Error> {
         match byte {
-            shell::KEY_CTRL_R => {
-                self.reset(true)?;
+            shell::KEY_DC1 => {
+                self.promt_pending = true;
+                write!(self.serial, "{:?} ", self.vm).map_err(Error::FormatError)?
             }
-            shell::KEY_CTRL_D => {
-                write!(self.serial, "{:?}", self.vm).map_err(Error::FormatError)?
+            shell::KEY_DC2 => {
+                self.print_banner()?;
+                self.reset()?;
+                self.cursor = 0;
+            }
+            shell::KEY_DC3 => {
+                if let Some(var) = self.rec_var {
+                    if self.cursor > 0 {
+                        self.store
+                            .insert(&self.get_var_key(var), &self.buf[..self.cursor])
+                            .map_err(|_| Error::StoreError)?;
+                        self.serial.write_str("\r\n").map_err(Error::FormatError)?;
+                    }
+                    self.cursor = 0;
+                    self.hide_status = true;
+                    self.promt_pending = true;
+                    self.rec_var = None;
+                }
+            }
+            shell::KEY_DC4 => {
+                // Start record
             }
             shell::KEY_ESC | b'[' => {
-                // TODO: filter mouse events
                 self.escape = true;
             }
             shell::KEY_BS | shell::KEY_DEL => {
+                self.escape = false;
                 if self.cursor == 0 {
                     self.serial
                         .write_str(shell::BELL)
                         .map_err(Error::FormatError)?;
+                    return Ok(());
                 }
                 self.serial
                     .write_str(shell::DEL)
@@ -121,77 +192,78 @@ impl FPGB {
             }
             shell::KEY_RET => {
                 self.escape = false;
-                if self.cursor == 0 {
-                    self.serial
-                        .write_str(shell::BELL)
-                        .map_err(Error::FormatError)?;
-                }
-                self.serial
-                    .write_str(shell::CRFL)
-                    .map_err(Error::FormatError)?;
-                let prog =
-                    core::str::from_utf8(&self.buf[0..self.cursor]).map_err(|_| Error::BadInput)?;
-                self.cursor = 0;
-                self.vm.load(prog).map_err(Error::VMError)?;
-                self.spin()?; //TODO: move to main
-                return Ok(true);
+                return if self.rec_var.is_some() {
+                    self.buf[self.cursor] = byte;
+                    self.buf[self.cursor + 1] = b'\n';
+                    self.cursor += 2;
+                    self.serial.write_str(" ").map_err(Error::FormatError)
+                } else {
+                    let prog = core::str::from_utf8(&self.buf[..self.cursor])
+                        .map_err(|_| Error::BadInput)?;
+                    self.vm.load(prog).map_err(Error::VMError)?;
+                    self.promt_pending = true;
+                    self.cursor = 0;
+                    self.serial.write_str("\r\n").map_err(Error::FormatError)
+                };
             }
             _ => {
                 if self.escape {
                     self.escape = false;
-                    self.serial
-                        .write_str(shell::BELL)
-                        .map_err(Error::FormatError)?;
+                    return Ok(());
                 }
                 if self.cursor >= self.buf.len() {
                     self.serial
                         .write_str(shell::BELL)
                         .map_err(Error::FormatError)?;
+                    return Ok(());
                 }
                 self.buf[self.cursor] = byte;
                 self.cursor += 1;
-                if self.cursor >= self.buf.len() {
-                    self.cursor = 0;
-                    return Err(Error::BadInput);
+                block!(self.serial.write(byte)).map_err(Error::SerialError)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn tick(&mut self) -> Result<(), Error> {
+        match self.vm.tick() {
+            Ok(Some(req)) => match req {
+                VMRequest::Idle => {}
+                VMRequest::Reset => self.reset()?,
+                VMRequest::Wire => self.update_wires(true)?,
+                VMRequest::Unwire => self.update_wires(false)?,
+                VMRequest::ListWires => self.list_wires()?,
+                VMRequest::IO(io) => self.io_req(io)?,
+                VMRequest::CallProc(proc) => self.call_proc(proc)?,
+                VMRequest::FetchVar(var) => self.fetch_var(var)?,
+                VMRequest::StoreVar(var, val) => self.store_var(var, val)?,
+                VMRequest::TestVar(var) => self.test_var(var)?,
+                VMRequest::DeleteVar(var) => self.delete_var(var)?,
+            },
+            Err(VMError::ProgramHalted) => {
+                if self.promt_pending {
+                    if !self.hide_status {
+                        self.serial
+                            .write_str("ok\r\n")
+                            .map_err(Error::FormatError)?;
+                    }
+                    self.serial
+                        .write_str(shell::PROMT)
+                        .map_err(Error::FormatError)?;
+                    self.hide_status = false;
+                    self.promt_pending = false;
                 }
-                self.serial.write(byte).map_err(Error::SerialError)?;
             }
-        }
-        Ok(false)
+            Err(err) => return Err(Error::VMError(err)),
+            _ => {}
+        };
+        Ok(())
     }
 
-    fn spin(&mut self) -> Result<(), Error> {
-        loop {
-            match self.vm.spin() {
-                Err(err) => return Err(Error::VMError(err)),
-                Ok(req) => match req {
-                    VMRequest::Idle => return Ok(()),
-                    VMRequest::Reset => self.reset(false)?,
-                    VMRequest::Wire => self.update_wires(true)?,
-                    VMRequest::Unwire => self.update_wires(false)?,
-                    VMRequest::ListWires => self.list_wires()?,
-                    VMRequest::IO(io_req) => self.io(io_req)?,
-                    VMRequest::CallProc(proc) => self.call_proc(proc)?,
-                    VMRequest::FetchVar(var) => self.fetch_var(var)?,
-                    VMRequest::StoreVar(var, val) => self.store_var(var, val)?,
-                    VMRequest::TestVar(var) => self.test_var(var)?,
-                    VMRequest::DeleteVar(var) => self.delete_var(var)?,
-                },
-            }
-        }
-    }
-
-    fn self_test(&mut self) -> Result<(), Error> {
-        self.reset(false)?;
-        self.vm.load(&SELF_TEST_PROG).map_err(Error::VMError)?;
-        self.spin()?;
-        self.reset(false)
-    }
-
-    fn io(&mut self, req: IO) -> Result<(), Error> {
+    fn io_req(&mut self, req: IO) -> Result<(), Error> {
         match req {
             IO::Clear => self.print_str(shell::CLS),
-            IO::Cr | IO::Nl => self.print_str(shell::CRFL),
+            IO::Cr | IO::Nl => self.print_str("\r\n"),
             IO::Space => self.print_str(" "),
             IO::PrintStack => self.print_stack(),
             IO::PrintTop => {
@@ -213,26 +285,221 @@ impl FPGB {
         }
     }
 
-    fn call_proc(&mut self, word: u32) -> Result<(), Error> {
-        match word {
-            proc::SELF_TEST => self.self_test()?,
+    fn call_proc(&mut self, proc: u32) -> Result<(), Error> {
+        match proc {
             proc::VERSION => self.print_version()?,
             proc::HELP => self.print_help()?,
             proc::STATUS => self.print_status()?,
+            proc::REC => match self.vm.pop() {
+                Ok(Value::Var(var)) => {
+                    self.promt_pending = false;
+                    self.cursor = 0;
+                    self.rec_var = Some(var);
+                }
+                _ => {
+                    let vm_err = VMError::InvalidArguments(Word::Proc(proc));
+                    return Err(Error::VMError(vm_err));
+                }
+            },
+            proc::HARD_RESET => {
+                self.store.create().map_err(|_| Error::StoreError)?;
+                self.reset()?;
+            }
+            proc::CAT => match self.vm.pop() {
+                Ok(Value::Var(var)) => {
+                    self.load_var(var)?;
+                    for b in &self.buf[0..self.cursor] {
+                        block!(self.serial.write(*b)).map_err(Error::SerialError)?;
+                    }
+                    self.cursor = 0;
+                    self.serial.write_str("\r\n").map_err(Error::FormatError)?;
+                    self.hide_status = true;
+                }
+                _ => {
+                    let vm_err = VMError::InvalidArguments(Word::Proc(proc));
+                    return Err(Error::VMError(vm_err));
+                }
+            },
+            proc::EVAL => match self.vm.pop() {
+                Ok(Value::Var(var)) => {
+                    self.load_var(var)?;
+                    let prog = core::str::from_utf8(&self.buf[..self.cursor])
+                        .map_err(|_| Error::BadInput)?;
+                    self.vm.load(prog).map_err(Error::VMError)?;
+                    self.cursor = 0;
+                }
+                _ => {
+                    let vm_err = VMError::InvalidArguments(Word::Proc(proc));
+                    return Err(Error::VMError(vm_err));
+                }
+            },
             proc::DELAY => match self.vm.pop() {
                 Ok(Value::Num(num)) if num > 0 => {
                     self.delay.delay_ms(num as u32);
                 }
                 _ => {
-                    let vm_err = VMError::InvalidArguments(Word::Proc(word));
+                    let vm_err = VMError::InvalidArguments(Word::Proc(proc));
                     return Err(Error::VMError(vm_err));
                 }
             },
-            word => {
-                write!(self.serial, "UNIMPL PROC 0x{:x} ", word).map_err(Error::FormatError)?;
+            _ => {
+                write!(self.serial, "ERR: Unimplemented(0x{:x})\r\n", proc)
+                    .map_err(Error::FormatError)?;
+                self.hide_status = true;
             }
         };
         Ok(())
+    }
+
+    fn get_var_key(&self, var: u32) -> [u8; 4] {
+        let mut key_buf = [0; 4];
+        BigEndian::write_u32(&mut key_buf, var);
+        key_buf
+    }
+
+    fn contains_var(&mut self, var: u32) -> Result<bool, Error> {
+        self.store
+            .contains_key(&self.get_var_key(var))
+            .map_err(|_| Error::StoreError)
+    }
+
+    fn load_var(&mut self, var: u32) -> Result<(), Error> {
+        let key_buf = self.get_var_key(var);
+        self.cursor = 0;
+        loop {
+            let n = self
+                .store
+                .load_val(
+                    &key_buf,
+                    self.cursor as u16,
+                    &mut self.buf[self.cursor..(self.cursor + 255)],
+                )
+                .map_err(|_| Error::StoreError)?;
+            self.cursor += n;
+            if n < 255 {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn test_var(&mut self, var: u32) -> Result<(), Error> {
+        match var {
+            vars::ADC | vars::AUX | vars::DAC => self
+                .vm
+                .push(Value::Num(wire4::encode_bool(true)))
+                .map_err(Error::VMError),
+            var => {
+                let flag = wire4::encode_bool(self.contains_var(var)?);
+                self.vm.push(Value::Num(flag)).map_err(Error::VMError)
+            }
+        }
+    }
+
+    fn fetch_var(&mut self, var: u32) -> Result<(), Error> {
+        match var {
+            vars::AUX | vars::DAC => {
+                let err = VMError::InvalidArguments(Word::FetchVar);
+                Err(Error::VMError(err))
+            }
+            vars::ADC => {
+                let raw: u32 = self
+                    .adc
+                    .read(&mut self.adc_pin)
+                    .map_err(|_| Error::AdcError)?;
+                let u = raw * 5000 / 4095;
+                self.vm.push(Value::Num(u as i32)).map_err(Error::VMError)
+            }
+            var => {
+                let var = match var {
+                    vars::AUX | vars::DAC => {
+                        let err = VMError::InvalidArguments(Word::FetchVar);
+                        Err(Error::VMError(err))
+                    }
+                    vars::ADC => {
+                        let raw: u32 = self
+                            .adc
+                            .read(&mut self.adc_pin)
+                            .map_err(|_| Error::AdcError)?;
+                        let u = raw * 5000 / 4095;
+                        Ok(Value::Num(u as i32))
+                    }
+                    var => {
+                        let mut var_buf = [0; 12];
+                        let n = self
+                            .store
+                            .load_val(&self.get_var_key(var), 0, &mut var_buf)
+                            .map_err(|_| Error::StoreError)?;
+                        if n == 5 && var_buf[0] == 0 {
+                            let val = BigEndian::read_i32(&var_buf[1..5]);
+                            Ok(Value::Num(val))
+                        } else {
+                            let string = core::str::from_utf8(&var_buf[0..n])
+                                .map_err(|_| Error::BadInput)?;
+                            let string_key =
+                                self.vm.intern_string(&string).map_err(Error::VMError)?;
+                            Ok(Value::Str(string_key))
+                        }
+                    }
+                }?;
+                self.vm.push(var).map_err(Error::VMError)
+            }
+        }
+    }
+
+    fn store_var(&mut self, var: u32, val: Value) -> Result<(), Error> {
+        match var {
+            vars::ADC | vars::AUX => {
+                let err = VMError::InvalidArguments(Word::StoreVar);
+                Err(Error::VMError(err))
+            }
+            vars::DAC => match val {
+                Value::Num(num) => {
+                    let val = num * 4095 / 3300;
+                    self.dac.set_value(val as u16);
+                    Ok(())
+                }
+                _ => {
+                    let err = VMError::InvalidArguments(Word::StoreVar);
+                    Err(Error::VMError(err))
+                }
+            },
+            var => match val {
+                Value::Num(num) => {
+                    let mut val_buf = [0; 5];
+                    BigEndian::write_i32(&mut val_buf[1..5], num);
+                    self.store
+                        .insert(&self.get_var_key(var), &val_buf)
+                        .map_err(|_| Error::StoreError)
+                }
+                Value::Str(str_key) => {
+                    let val = self
+                        .vm
+                        .get_string(str_key)
+                        .ok_or(Error::VMError(VMError::InvalidPtr))?;
+                    self.store
+                        .insert(&self.get_var_key(var), val.as_ref())
+                        .map_err(|_| Error::StoreError)
+                }
+                _ => {
+                    let err = VMError::InvalidArguments(Word::StoreVar);
+                    Err(Error::VMError(err))
+                }
+            },
+        }
+    }
+
+    fn delete_var(&mut self, var: u32) -> Result<(), Error> {
+        match var {
+            vars::ADC | vars::AUX | vars::DAC => {
+                let err = VMError::InvalidArguments(Word::DeleteVar);
+                Err(Error::VMError(err))
+            }
+            var => self
+                .store
+                .remove(&self.get_var_key(var))
+                .map_err(|_| Error::StoreError),
+        }
     }
 
     fn update_wires(&mut self, on: bool) -> Result<(), Error> {
@@ -279,124 +546,6 @@ impl FPGB {
         Err(Error::VMError(VMError::InvalidArguments(Word::ListWires)))
     }
 
-    fn store_var(&mut self, var: u32, val: Value) -> Result<(), Error> {
-        match var {
-            vars::ADC | vars::AUX | vars::BOOT => {
-                let err = VMError::InvalidArguments(Word::StoreVar);
-                Err(Error::VMError(err))
-            }
-            vars::DAC => match val {
-                Value::Num(num) => {
-                    let val = num * 4095 / 3300;
-                    self.dac.set_value(val as u16);
-                    Ok(())
-                }
-                _ => {
-                    let err = VMError::InvalidArguments(Word::StoreVar);
-                    Err(Error::VMError(err))
-                }
-            },
-            var => {
-                let mut key_buf = [0; 5];
-                key_buf[0] = 0xff;
-                BigEndian::write_u32(&mut key_buf[1..5], var);
-                match val {
-                    Value::Num(num) => {
-                        let mut val_buf = [0; 5];
-                        BigEndian::write_i32(&mut val_buf[1..5], num);
-                        self.store
-                            .insert(&key_buf, &val_buf)
-                            .map_err(|_| Error::StoreError)
-                    }
-                    Value::Str(str_key) => {
-                        let val = self
-                            .vm
-                            .get_string(str_key)
-                            .ok_or(Error::VMError(VMError::InvalidPtr))?;
-                        self.store
-                            .insert(&key_buf, val.as_ref())
-                            .map_err(|_| Error::StoreError)
-                    }
-                    _ => {
-                        let err = VMError::InvalidArguments(Word::StoreVar);
-                        Err(Error::VMError(err))
-                    }
-                }
-            }
-        }
-    }
-
-    fn test_var(&mut self, var: u32) -> Result<(), Error> {
-        match var {
-            vars::ADC | vars::AUX | vars::DAC => self
-                .vm
-                .push(Value::Num(wire4::encode_bool(true)))
-                .map_err(Error::VMError),
-            var => {
-                let mut key_buf = [0; 5];
-                key_buf[0] = 0xff;
-                BigEndian::write_u32(&mut key_buf[1..5], var);
-                let flag = wire4::encode_bool(
-                    self.store
-                        .contains_key(&key_buf)
-                        .map_err(|_| Error::StoreError)?,
-                );
-                self.vm.push(Value::Num(flag)).map_err(Error::VMError)
-            }
-        }
-    }
-
-    fn fetch_var(&mut self, var: u32) -> Result<(), Error> {
-        match var {
-            vars::AUX | vars::DAC | vars::BOOT => {
-                let err = VMError::InvalidArguments(Word::FetchVar);
-                Err(Error::VMError(err))
-            }
-            vars::ADC => {
-                let raw: u32 = self
-                    .adc
-                    .read(&mut self.adc_pin)
-                    .map_err(|_| Error::AdcError)?;
-                let u = raw * 5000 / 4095;
-                self.vm.push(Value::Num(u as i32)).map_err(Error::VMError)
-            }
-            var => {
-                let mut key_buf = [0; 5];
-                key_buf[0] = 0xff;
-                let mut var_buf = [0; 16];
-                BigEndian::write_u32(&mut key_buf[1..5], var);
-                let n = self
-                    .store
-                    .load_val(&key_buf, 0, &mut var_buf)
-                    .map_err(|_| Error::StoreError)?;
-                if n == 5 && var_buf[0] == 0 {
-                    let val = BigEndian::read_i32(&var_buf[1..5]);
-                    self.vm.push(Value::Num(val)).map_err(Error::VMError)
-                } else {
-                    let string =
-                        core::str::from_utf8(&var_buf[0..n]).map_err(|_| Error::BadInput)?;
-                    let string_key = self.vm.intern_string(&string).map_err(Error::VMError)?;
-                    self.vm.push(Value::Str(string_key)).map_err(Error::VMError)
-                }
-            }
-        }
-    }
-
-    fn delete_var(&mut self, var: u32) -> Result<(), Error> {
-        match var {
-            vars::ADC | vars::AUX | vars::DAC | vars::BOOT => {
-                let err = VMError::InvalidArguments(Word::DeleteVar);
-                Err(Error::VMError(err))
-            }
-            var => {
-                let mut key_buf = [0; 5];
-                key_buf[0] = 0xff;
-                BigEndian::write_u32(&mut key_buf[1..5], var);
-                self.store.remove(&key_buf).map_err(|_| Error::StoreError)
-            }
-        }
-    }
-
     fn print_str(&mut self, s: &str) -> Result<(), Error> {
         self.serial.write_str(s).map_err(Error::FormatError)
     }
@@ -415,7 +564,9 @@ impl FPGB {
             }
             .map_err(Error::FormatError)?;
         }
-        write!(self.serial, "<- Top ").map_err(Error::FormatError)?;
+        self.serial
+            .write_str("<- Top ")
+            .map_err(Error::FormatError)?;
         Ok(())
     }
 
@@ -437,16 +588,14 @@ impl FPGB {
         self.serial
             .write_str(shell::CLS)
             .map_err(Error::FormatError)?;
-        for line in BANNER.lines() {
-            write!(self.serial, "{}{}", line, shell::CRFL).map_err(Error::FormatError)?;
+        for line in include_str!("./data/banner.ascii").lines() {
+            write!(self.serial, "{}\r\n", line).map_err(Error::FormatError)?;
         }
-
         write!(
             self.serial,
-            "ver {}{}{}",
+            "Firmware: v{}\r\n\r\n{}",
             env!("CARGO_PKG_VERSION"),
-            shell::CRFL,
-            shell::PROMT
+            shell::PROMT,
         )
         .map_err(Error::FormatError)?;
         Ok(())
@@ -466,34 +615,4 @@ impl FPGB {
         write!(self.serial, ">> status message << ").map_err(Error::FormatError)?;
         Ok(())
     }
-}
-
-pub mod proc {
-    pub const HELP: u32 = 0xac61_5edc;
-    pub const DELAY: u32 = 0x604d_5d99;
-    pub const STATUS: u32 = 0xca52_ccb5;
-    pub const VERSION: u32 = 0x1dc6_8700;
-    pub const SELF_TEST: u32 = 0x3238_16a8;
-}
-
-pub mod vars {
-    #[allow(dead_code)]
-    pub const BOOT: u32 = 0x4fc8_01d0;
-    pub const AUX: u32 = 0xb436_c496;
-    pub const ADC: u32 = 0x7b63_9cfb;
-    pub const DAC: u32 = 0x322d_b04f;
-}
-
-pub mod shell {
-    pub const PROMT: &str = "\r\n$> ";
-    pub const CLS: &str = "\x1b[H\x1b[2J";
-    pub const DEL: &str = "\x08 \x08";
-    pub const CRFL: &str = "\r\n";
-    pub const BELL: &str = "\x07";
-    pub const KEY_CTRL_D: u8 = 0x4;
-    pub const KEY_CTRL_R: u8 = 0x12;
-    pub const KEY_RET: u8 = 0x0d;
-    pub const KEY_BS: u8 = 0x08;
-    pub const KEY_DEL: u8 = 0x7f;
-    pub const KEY_ESC: u8 = 0x1b;
 }

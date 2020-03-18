@@ -14,20 +14,15 @@ mod matrix;
 use config::*;
 use fpgb::FPGB;
 use hal::analog::adc;
-use hal::exti::Event;
-use hal::gpio::SignalEdge;
 use hal::i2c;
 use hal::prelude::*;
 use hal::serial;
-use hal::stm32;
 use rtfm::app;
 
 #[app(device = hal::stm32, peripherals = true)]
 const APP: () = {
     struct Resources {
         fpgb: FPGB,
-        exti: stm32::EXTI,
-        ui_timer: UITimer,
         led_timer: LedTimer,
     }
 
@@ -39,19 +34,9 @@ const APP: () = {
         let eeprom_delay = ctx.device.TIM3.delay(&mut rcc);
         let matrix_delay = ctx.device.TIM2.delay(&mut rcc);
 
-        let mut exti = ctx.device.EXTI;
         let port_a = ctx.device.GPIOA.split(&mut rcc);
         let port_b = ctx.device.GPIOB.split(&mut rcc);
         let port_c = ctx.device.GPIOC.split(&mut rcc);
-
-        let btn = port_a.pa8.into_pull_up_input();
-        btn.listen(SignalEdge::Falling, &mut exti);
-        let _blue_led_pin = port_b.pb6.into_push_pull_output();
-        let adc_pin = port_a.pa5.into_analog();
-
-        let mut ui_timer = ctx.device.TIM16.timer(&mut rcc);
-        ui_timer.start(UI_FREQ);
-        ui_timer.listen();
 
         let mut led_timer = ctx.device.TIM17.timer(&mut rcc);
         led_timer.start(ANIMATION_FREQ);
@@ -60,6 +45,7 @@ const APP: () = {
         let mut adc = ctx.device.ADC.constrain(&mut rcc);
         adc.set_sample_time(adc::SampleTime::T_80);
         adc.set_precision(adc::Precision::B_12);
+        let adc_pin = port_a.pa5.into_analog();
 
         let mut dac = ctx.device.DAC.constrain(port_a.pa4, &mut rcc);
         dac.calibrate(&mut vm_delay);
@@ -114,25 +100,14 @@ const APP: () = {
         );
 
         let mut fpgb = FPGB::new(vm_delay, serial, dac, adc, adc_pin, matrix, store);
-        fpgb.reset(false).expect("Failed to reset breadboard");
+        fpgb.reset().expect("Failed to reset breadboard");
 
-        init::LateResources {
-            fpgb,
-            exti,
-            ui_timer,
-            led_timer,
-        }
+        init::LateResources { fpgb, led_timer }
     }
 
     #[task(binds = USART2, resources = [fpgb])]
     fn serial_data(ctx: serial_data::Context) {
-        // TODO: split serial data flow from VM
         ctx.resources.fpgb.poll_serial();
-    }
-
-    #[task(binds = TIM16, resources = [ui_timer])]
-    fn ui_timer(ctx: ui_timer::Context) {
-        ctx.resources.ui_timer.clear_irq();
     }
 
     #[task(binds = TIM17, resources = [led_timer])]
@@ -140,8 +115,10 @@ const APP: () = {
         ctx.resources.led_timer.clear_irq();
     }
 
-    #[task(binds = EXTI4_15, resources = [exti])]
-    fn btn(ctx: btn::Context) {
-        ctx.resources.exti.unpend(Event::GPIO8);
+    #[idle(resources = [fpgb])]
+    fn idle(mut ctx: idle::Context) -> ! {
+        loop {
+            ctx.resources.fpgb.lock(|fpgb| fpgb.spin());
+        }
     }
 };

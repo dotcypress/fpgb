@@ -10,26 +10,26 @@ pub enum Error {
 
 pub struct Breadboard {
     matrix: SwitchMatrix,
-    nets: [Net; MAX_NETS - 1],
+    nets: [Net; MAX_NETS],
 }
 
 impl Breadboard {
     pub fn new(matrix: SwitchMatrix) -> Self {
         Breadboard {
             matrix,
-            nets: [Net::default(); MAX_NETS - 1],
+            nets: [Net::default(); MAX_NETS],
         }
     }
 
     pub fn reset(&mut self) -> Result<(), Error> {
-        self.nets = [Net::default(); MAX_NETS - 1];
+        self.nets = [Net::default(); MAX_NETS];
         self.matrix.reset().map_err(|_| Error::MatrixError)
     }
 
     pub fn wire(&mut self, net: u32, port: u32) -> Result<(), Error> {
-        let net_idx = self.resolve_net(net)?;
+        let net_idx = resolve_net_idx(net)?;
         self.nets[net_idx].connect(port)?;
-        let (chip_idx, port_idx) = self.resolve_port(port)?;
+        let (chip_idx, port_idx) = resolve_port(port)?;
         self.matrix
             .connect(chip_idx, net_idx, port_idx)
             .map_err(|_| Error::MatrixError)?;
@@ -37,9 +37,9 @@ impl Breadboard {
     }
 
     pub fn unwire(&mut self, net: u32, port: u32) -> Result<(), Error> {
-        let net_idx = self.resolve_net(net)?;
+        let net_idx = resolve_net_idx(net)?;
         self.nets[net_idx].disconnect(port);
-        let (chip_idx, port_idx) = self.resolve_port(port)?;
+        let (chip_idx, port_idx) = resolve_port(port)?;
         self.matrix
             .disconnect(chip_idx, net_idx, port_idx)
             .map_err(|_| Error::MatrixError)?;
@@ -47,62 +47,264 @@ impl Breadboard {
     }
 
     pub fn wires(&self, net: u32, buf: &mut [u32]) -> Result<usize, Error> {
-        let net_idx = self.resolve_net(net)?;
+        let net_idx = resolve_net_idx(net)?;
         Ok(self.nets[net_idx].connections(buf))
     }
+}
 
-    fn resolve_net(&self, net: u32) -> Result<usize, Error> {
-        NETWORKS
-            .iter()
-            .position(|n| *n == net)
-            .ok_or(Error::UnknownNet)
-    }
+pub fn resolve_net_name(net: u32) -> Result<&'static str, Error> {
+    let idx = resolve_net_idx(net)?;
+    Ok(match idx {
+        0 => "#1",
+        1 => "#2",
+        2 => "#3",
+        3 => "#4",
+        4 => "#5",
+        5 => "#6",
+        6 => "#7",
+        7 => "#8",
+        8 => "#9",
+        9 => "#10",
+        10 => "#11",
+        11 => "#12",
+        12 => "#13",
+        13 => "#14",
+        14 => "#15",
+        15 => "#16",
+        _ => return Err(Error::UnknownNet),
+    })
+}
 
-    fn resolve_port(&self, port: u32) -> Result<(usize, usize), Error> {
-        Ok(match port {
-            ports::GND => (4, 6),
-            ports::V5 => (4, 0),
-            ports::V3 => (4, 1),
-            ports::AUX => (4, 7),
-            ports::DAC => (4, 4),
-            ports::ADC => (4, 5),
-            ports::A1 | ports::B1 | ports::C1 | ports::D1 | ports::E1 => (2, 6),
-            ports::F1 | ports::G1 | ports::H1 | ports::I1 | ports::J1 => (4, 2),
-            ports::A2 | ports::B2 | ports::C2 | ports::D2 | ports::E2 => (0, 5),
-            ports::F2 | ports::G2 | ports::H2 | ports::I2 | ports::J2 => (4, 3),
-            ports::A3 | ports::B3 | ports::C3 | ports::D3 | ports::E3 => (0, 4),
-            ports::F3 | ports::G3 | ports::H3 | ports::I3 | ports::J3 => (2, 4),
-            ports::A4 | ports::B4 | ports::C4 | ports::D4 | ports::E4 => (0, 6),
-            ports::F4 | ports::G4 | ports::H4 | ports::I4 | ports::J4 => (2, 5),
-            ports::A5 | ports::B5 | ports::C5 | ports::D5 | ports::E5 => (0, 7),
-            ports::F5 | ports::G5 | ports::H5 | ports::I5 | ports::J5 => (2, 7),
-            ports::A6 | ports::B6 | ports::C6 | ports::D6 | ports::E6 => (0, 0),
-            ports::F6 | ports::G6 | ports::H6 | ports::I6 | ports::J6 => (2, 0),
-            ports::A7 | ports::B7 | ports::C7 | ports::D7 | ports::E7 => (0, 3),
-            ports::F7 | ports::G7 | ports::H7 | ports::I7 | ports::J7 => (2, 1),
-            ports::A8 | ports::B8 | ports::C8 | ports::D8 | ports::E8 => (0, 1),
-            ports::F8 | ports::G8 | ports::H8 | ports::I8 | ports::J8 => (2, 2),
-            ports::A9 | ports::B9 | ports::C9 | ports::D9 | ports::E9 => (0, 2),
-            ports::F9 | ports::G9 | ports::H9 | ports::I9 | ports::J9 => (2, 3),
-            ports::A10 | ports::B10 | ports::C10 | ports::D10 | ports::E10 => (1, 5),
-            ports::F10 | ports::G10 | ports::H10 | ports::I10 | ports::J10 => (3, 6),
-            ports::A11 | ports::B11 | ports::C11 | ports::D11 | ports::E11 => (1, 4),
-            ports::F11 | ports::G11 | ports::H11 | ports::I11 | ports::J11 => (3, 5),
-            ports::A12 | ports::B12 | ports::C12 | ports::D12 | ports::E12 => (1, 6),
-            ports::F12 | ports::G12 | ports::H12 | ports::I12 | ports::J12 => (3, 4),
-            ports::A13 | ports::B13 | ports::C13 | ports::D13 | ports::E13 => (1, 7),
-            ports::F13 | ports::G13 | ports::H13 | ports::I13 | ports::J13 => (3, 7),
-            ports::A14 | ports::B14 | ports::C14 | ports::D14 | ports::E14 => (1, 3),
-            ports::F14 | ports::G14 | ports::H14 | ports::I14 | ports::J14 => (3, 0),
-            ports::A15 | ports::B15 | ports::C15 | ports::D15 | ports::E15 => (1, 0),
-            ports::F15 | ports::G15 | ports::H15 | ports::I15 | ports::J15 => (3, 1),
-            ports::A16 | ports::B16 | ports::C16 | ports::D16 | ports::E16 => (1, 1),
-            ports::F16 | ports::G16 | ports::H16 | ports::I16 | ports::J16 => (3, 2),
-            ports::A17 | ports::B17 | ports::C17 | ports::D17 | ports::E17 => (1, 2),
-            ports::F17 | ports::G17 | ports::H17 | ports::I17 | ports::J17 => (3, 3),
-            _ => return Err(Error::UnknownPort),
-        })
-    }
+pub fn resolve_port_name(net: u32) -> Result<&'static str, Error> {
+    Ok(match net {
+        ports::V5 => "~5V",
+        ports::V3 => "~3V",
+        ports::GND => "~gnd",
+        ports::AUX => "~aux",
+        ports::DAC => "~dac",
+        ports::ADC => "~adc",
+        ports::A1 => "~a1",
+        ports::B1 => "~b1",
+        ports::C1 => "~c1",
+        ports::D1 => "~d1",
+        ports::E1 => "~e1",
+        ports::F1 => "~f1",
+        ports::G1 => "~g1",
+        ports::H1 => "~h1",
+        ports::I1 => "~i1",
+        ports::J1 => "~j1",
+        ports::A2 => "~a2",
+        ports::B2 => "~b2",
+        ports::C2 => "~c2",
+        ports::D2 => "~d2",
+        ports::E2 => "~e2",
+        ports::F2 => "~f2",
+        ports::G2 => "~g2",
+        ports::H2 => "~h2",
+        ports::I2 => "~i2",
+        ports::J2 => "~j2",
+        ports::A3 => "~a3",
+        ports::B3 => "~b3",
+        ports::C3 => "~c3",
+        ports::D3 => "~d3",
+        ports::E3 => "~e3",
+        ports::F3 => "~f3",
+        ports::G3 => "~g3",
+        ports::H3 => "~h3",
+        ports::I3 => "~i3",
+        ports::J3 => "~j3",
+        ports::A4 => "~a4",
+        ports::B4 => "~b4",
+        ports::C4 => "~c4",
+        ports::D4 => "~d4",
+        ports::E4 => "~e4",
+        ports::F4 => "~f4",
+        ports::G4 => "~g4",
+        ports::H4 => "~h4",
+        ports::I4 => "~i4",
+        ports::J4 => "~j4",
+        ports::A5 => "~a5",
+        ports::B5 => "~b5",
+        ports::C5 => "~c5",
+        ports::D5 => "~d5",
+        ports::E5 => "~e5",
+        ports::F5 => "~f5",
+        ports::G5 => "~g5",
+        ports::H5 => "~h5",
+        ports::I5 => "~i5",
+        ports::J5 => "~j5",
+        ports::A6 => "~a6",
+        ports::B6 => "~b6",
+        ports::C6 => "~c6",
+        ports::D6 => "~d6",
+        ports::E6 => "~e6",
+        ports::F6 => "~f6",
+        ports::G6 => "~g6",
+        ports::H6 => "~h6",
+        ports::I6 => "~i6",
+        ports::J6 => "~j6",
+        ports::A7 => "~a7",
+        ports::B7 => "~b7",
+        ports::C7 => "~c7",
+        ports::D7 => "~d7",
+        ports::E7 => "~e7",
+        ports::F7 => "~f7",
+        ports::G7 => "~g7",
+        ports::H7 => "~h7",
+        ports::I7 => "~i7",
+        ports::J7 => "~j7",
+        ports::A8 => "~a8",
+        ports::B8 => "~b8",
+        ports::C8 => "~c8",
+        ports::D8 => "~d8",
+        ports::E8 => "~e8",
+        ports::F8 => "~f8",
+        ports::G8 => "~g8",
+        ports::H8 => "~h8",
+        ports::I8 => "~i8",
+        ports::J8 => "~j8",
+        ports::A9 => "~a9",
+        ports::B9 => "~b9",
+        ports::C9 => "~c9",
+        ports::D9 => "~d9",
+        ports::E9 => "~e9",
+        ports::F9 => "~f9",
+        ports::G9 => "~g9",
+        ports::H9 => "~h9",
+        ports::I9 => "~i9",
+        ports::J9 => "~j9",
+        ports::A10 => "~a10",
+        ports::B10 => "~b10",
+        ports::C10 => "~c10",
+        ports::D10 => "~d10",
+        ports::E10 => "~e10",
+        ports::F10 => "~f10",
+        ports::G10 => "~g10",
+        ports::H10 => "~h10",
+        ports::I10 => "~i10",
+        ports::J10 => "~j10",
+        ports::A11 => "~a11",
+        ports::B11 => "~b11",
+        ports::C11 => "~c11",
+        ports::D11 => "~d11",
+        ports::E11 => "~e11",
+        ports::F11 => "~f11",
+        ports::G11 => "~g11",
+        ports::H11 => "~h11",
+        ports::I11 => "~i11",
+        ports::J11 => "~j11",
+        ports::A12 => "~a12",
+        ports::B12 => "~b12",
+        ports::C12 => "~c12",
+        ports::D12 => "~d12",
+        ports::E12 => "~e12",
+        ports::F12 => "~f12",
+        ports::G12 => "~g12",
+        ports::H12 => "~h12",
+        ports::I12 => "~i12",
+        ports::J12 => "~j12",
+        ports::A13 => "~a13",
+        ports::B13 => "~b13",
+        ports::C13 => "~c13",
+        ports::D13 => "~d13",
+        ports::E13 => "~e13",
+        ports::F13 => "~f13",
+        ports::G13 => "~g13",
+        ports::H13 => "~h13",
+        ports::I13 => "~i13",
+        ports::J13 => "~j13",
+        ports::A14 => "~a14",
+        ports::B14 => "~b14",
+        ports::C14 => "~c14",
+        ports::D14 => "~d14",
+        ports::E14 => "~e14",
+        ports::F14 => "~f14",
+        ports::G14 => "~g14",
+        ports::H14 => "~h14",
+        ports::I14 => "~i14",
+        ports::J14 => "~j14",
+        ports::A15 => "~a15",
+        ports::B15 => "~b15",
+        ports::C15 => "~c15",
+        ports::D15 => "~d15",
+        ports::E15 => "~e15",
+        ports::F15 => "~f15",
+        ports::G15 => "~g15",
+        ports::H15 => "~h15",
+        ports::I15 => "~i15",
+        ports::J15 => "~j15",
+        ports::A16 => "~a16",
+        ports::B16 => "~b16",
+        ports::C16 => "~c16",
+        ports::D16 => "~d16",
+        ports::E16 => "~e16",
+        ports::F16 => "~f16",
+        ports::G16 => "~g16",
+        ports::H16 => "~h16",
+        ports::I16 => "~i16",
+        ports::J16 => "~j16",
+        ports::A17 => "~a17",
+        ports::B17 => "~b17",
+        ports::C17 => "~c17",
+        ports::D17 => "~d17",
+        ports::E17 => "~e17",
+        ports::F17 => "~f17",
+        ports::G17 => "~g17",
+        ports::H17 => "~h17",
+        ports::I17 => "~i17",
+        ports::J17 => "~j17",
+        _ => return Err(Error::UnknownPort),
+    })
+}
+
+fn resolve_port(port: u32) -> Result<(usize, usize), Error> {
+    Ok(match port {
+        ports::GND => (4, 6),
+        ports::V5 => (4, 0),
+        ports::V3 => (4, 1),
+        ports::AUX => (4, 7),
+        ports::DAC => (4, 4),
+        ports::ADC => (4, 5),
+        ports::A1 | ports::B1 | ports::C1 | ports::D1 | ports::E1 => (2, 6),
+        ports::F1 | ports::G1 | ports::H1 | ports::I1 | ports::J1 => (4, 2),
+        ports::A2 | ports::B2 | ports::C2 | ports::D2 | ports::E2 => (0, 5),
+        ports::F2 | ports::G2 | ports::H2 | ports::I2 | ports::J2 => (4, 3),
+        ports::A3 | ports::B3 | ports::C3 | ports::D3 | ports::E3 => (0, 4),
+        ports::F3 | ports::G3 | ports::H3 | ports::I3 | ports::J3 => (2, 4),
+        ports::A4 | ports::B4 | ports::C4 | ports::D4 | ports::E4 => (0, 6),
+        ports::F4 | ports::G4 | ports::H4 | ports::I4 | ports::J4 => (2, 5),
+        ports::A5 | ports::B5 | ports::C5 | ports::D5 | ports::E5 => (0, 7),
+        ports::F5 | ports::G5 | ports::H5 | ports::I5 | ports::J5 => (2, 7),
+        ports::A6 | ports::B6 | ports::C6 | ports::D6 | ports::E6 => (0, 0),
+        ports::F6 | ports::G6 | ports::H6 | ports::I6 | ports::J6 => (2, 0),
+        ports::A7 | ports::B7 | ports::C7 | ports::D7 | ports::E7 => (0, 3),
+        ports::F7 | ports::G7 | ports::H7 | ports::I7 | ports::J7 => (2, 1),
+        ports::A8 | ports::B8 | ports::C8 | ports::D8 | ports::E8 => (0, 1),
+        ports::F8 | ports::G8 | ports::H8 | ports::I8 | ports::J8 => (2, 2),
+        ports::A9 | ports::B9 | ports::C9 | ports::D9 | ports::E9 => (0, 2),
+        ports::F9 | ports::G9 | ports::H9 | ports::I9 | ports::J9 => (2, 3),
+        ports::A10 | ports::B10 | ports::C10 | ports::D10 | ports::E10 => (1, 5),
+        ports::F10 | ports::G10 | ports::H10 | ports::I10 | ports::J10 => (3, 6),
+        ports::A11 | ports::B11 | ports::C11 | ports::D11 | ports::E11 => (1, 4),
+        ports::F11 | ports::G11 | ports::H11 | ports::I11 | ports::J11 => (3, 5),
+        ports::A12 | ports::B12 | ports::C12 | ports::D12 | ports::E12 => (1, 6),
+        ports::F12 | ports::G12 | ports::H12 | ports::I12 | ports::J12 => (3, 4),
+        ports::A13 | ports::B13 | ports::C13 | ports::D13 | ports::E13 => (1, 7),
+        ports::F13 | ports::G13 | ports::H13 | ports::I13 | ports::J13 => (3, 7),
+        ports::A14 | ports::B14 | ports::C14 | ports::D14 | ports::E14 => (1, 3),
+        ports::F14 | ports::G14 | ports::H14 | ports::I14 | ports::J14 => (3, 0),
+        ports::A15 | ports::B15 | ports::C15 | ports::D15 | ports::E15 => (1, 0),
+        ports::F15 | ports::G15 | ports::H15 | ports::I15 | ports::J15 => (3, 1),
+        ports::A16 | ports::B16 | ports::C16 | ports::D16 | ports::E16 => (1, 1),
+        ports::F16 | ports::G16 | ports::H16 | ports::I16 | ports::J16 => (3, 2),
+        ports::A17 | ports::B17 | ports::C17 | ports::D17 | ports::E17 => (1, 2),
+        ports::F17 | ports::G17 | ports::H17 | ports::I17 | ports::J17 => (3, 3),
+        _ => return Err(Error::UnknownPort),
+    })
+}
+
+fn resolve_net_idx(net: u32) -> Result<usize, Error> {
+    NETS.iter().position(|n| *n == net).ok_or(Error::UnknownNet)
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -147,7 +349,7 @@ impl Net {
     }
 }
 
-const NETWORKS: [u32; MAX_NETS] = [
+pub const NETS: [u32; MAX_NETS] = [
     nets::BUS1,
     nets::BUS2,
     nets::BUS3,

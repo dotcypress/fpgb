@@ -4,7 +4,6 @@ use core::fmt::Write;
 use crate::config::*;
 use crate::hal::prelude::*;
 
-pub const PROMT: &str = "$> ";
 pub const CLS: &str = "\x1b[H\x1b[2J";
 pub const DEL: &str = "\x08 \x08";
 pub const BELL: &str = "\x07";
@@ -16,6 +15,8 @@ pub const KEY_DC1: u8 = 0x11; // Ctrl+Q
 pub const KEY_DC2: u8 = 0x12; // Ctrl+R
 pub const KEY_DC3: u8 = 0x13; // Ctrl+S
 pub const KEY_DC4: u8 = 0x14; // Ctrl+T
+
+const PROMT: &str = "$> ";
 
 pub struct Shell {
     serial: Serial,
@@ -159,10 +160,6 @@ impl Shell {
 
     pub fn print_help(&mut self) -> fmt::Result {
         write!(self, ">> help message << ")
-    }
-
-    pub fn print_status(&mut self) -> fmt::Result {
-        write!(self, ">> status message << ")
     }
 }
 

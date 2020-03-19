@@ -3,7 +3,8 @@ use core::fmt::Write;
 use core::str;
 use wire4::*;
 
-use crate::breadboard::{self, Breadboard};
+use crate::breadboard::{self, Breadboard, NETS};
+use crate::breadboard::{resolve_net_name, resolve_port_name};
 use crate::config::*;
 use crate::hal::prelude::*;
 use crate::shell::{self, Shell};
@@ -216,7 +217,7 @@ impl FPGB {
         match proc {
             proc::VERSION => self.shell.print_version().map_err(Error::FormatError)?,
             proc::HELP => self.shell.print_help().map_err(Error::FormatError)?,
-            proc::STATUS => self.shell.print_status().map_err(Error::FormatError)?,
+            proc::STATUS => self.print_status()?,
             proc::REC => match self.vm.pop() {
                 Ok(Value::Var(var)) => {
                     self.shell.start_rec(var);
@@ -463,18 +464,8 @@ impl FPGB {
     }
 
     fn print_stack(&mut self) -> Result<(), Error> {
-        for val in self.vm.get_stack() {
-            match val {
-                Value::Port(port) => write!(self.shell, "~{:x} ", port),
-                Value::Net(net) => write!(self.shell, "#{:x} ", net),
-                Value::Var(net) => write!(self.shell, "${:x} ", net),
-                Value::Num(num) => write!(self.shell, "{} ", num),
-                Value::Str(key) => match self.vm.get_string(*key) {
-                    Some(string) => write!(self.shell, "\"{}\" ", string),
-                    None => write!(self.shell, "*{:x} ", key),
-                },
-            }
-            .map_err(Error::FormatError)?;
+        for val in self.vm.get_stack().clone() {
+            self.print_value(val)?;
         }
         self.shell
             .write_str("<- Top ")
@@ -482,16 +473,46 @@ impl FPGB {
         Ok(())
     }
 
+    pub fn print_status(&mut self) -> Result<(), Error> {
+        for net in &NETS {
+            let mut buf = [0; MAX_NET_PORTS - 1];
+            let wires = self
+                .bb
+                .wires(*net, &mut buf)
+                .map_err(Error::BreadboardError)?;
+            if wires > 0 {
+                self.print_value(Value::Net(*net))?;
+                for port in &buf[0..wires] {
+                    self.print_value(Value::Port(*port))?;
+                }
+                self.shell.write_str("\r\n").map_err(Error::FormatError)?;
+            }
+        }
+        Ok(())
+    }
+
     fn print_value(&mut self, val: Value) -> Result<(), Error> {
         match val {
-            Value::Port(port) => write!(self.shell, "~{:x} ", port),
-            Value::Net(net) => write!(self.shell, "#{:x} ", net),
             Value::Var(var) => write!(self.shell, "${:x} ", var),
             Value::Num(num) => write!(self.shell, "{} ", num),
             Value::Str(key) => match self.vm.get_string(key) {
                 Some(string) => write!(self.shell, "{} ", string),
                 None => write!(self.shell, "*{:x} ", key),
             },
+            Value::Net(net) => {
+                if let Ok(net_name) = resolve_net_name(net) {
+                    write!(self.shell, "{} ", net_name)
+                } else {
+                    write!(self.shell, "#{:x} ", net)
+                }
+            }
+            Value::Port(port) => {
+                if let Ok(port_name) = resolve_port_name(port) {
+                    write!(self.shell, "{} ", port_name)
+                } else {
+                    write!(self.shell, "~{:x} ", port)
+                }
+            }
         }
         .map_err(Error::FormatError)
     }

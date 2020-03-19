@@ -24,6 +24,7 @@ pub type I2CBus = i2c::I2c<stm32::I2C2, PA12<Output<OpenDrain>>, PA11<Output<Ope
 pub type VmDelay = delay::Delay<stm32::TIM15>;
 pub type EepromAdapter = crate::eeprom::EepromAdapter<I2CBus, delay::Delay<stm32::TIM3>>;
 pub type EepromStore = kvs::KVStore<EepromAdapter>;
+pub type StoreError = kvs::StoreError<eeprom24x::Error<hal::i2c::Error>>;
 pub type SwitchMatrix = crate::matrix::SwitchMatrix<
     delay::Delay<stm32::TIM2>,
     PB9<Output<PushPull>>,

@@ -10,6 +10,7 @@ mod config;
 mod eeprom;
 mod fpgb;
 mod matrix;
+mod shell;
 
 use config::*;
 use fpgb::FPGB;

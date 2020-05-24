@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "breadboard-firmware"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "byteorder",
  "cortex-m",
@@ -309,9 +309,9 @@ dependencies = [
 
 [[package]]
 name = "stm32g0xx-hal"
-version = "0.0.7"
+version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b13139cdd7b215b874a047487dfecd65653bb98952690510259c5e8dd706656a"
+checksum = "4dee04a2571faa07c264db8b00add9d607ad1ef8d50c74ebd70c91dcf5e8af3d"
 dependencies = [
  "as-slice",
  "bare-metal",

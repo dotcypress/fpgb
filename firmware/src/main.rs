@@ -52,19 +52,20 @@ const APP: () = {
         dac.calibrate(&mut vm_delay);
         dac.enable();
 
+        let serial_cgf = serial::Config::default().baudrate(115_200.bps());
+        let mut serial = ctx
+            .device
+            .USART2
+            .usart(port_a.pa2, port_a.pa3, serial_cgf, &mut rcc)
+            .expect("Failed to constrain serial port");
+        serial.listen(serial::Event::Rxne);
+
         let i2c = ctx.device.I2C2.i2c(
             port_a.pa12.into_open_drain_output(),
             port_a.pa11.into_open_drain_output(),
             i2c::Config::new(1.mhz()),
             &mut rcc,
         );
-
-        let mut serial = ctx
-            .device
-            .USART2
-            .usart(port_a.pa2, port_a.pa3, serial::Config::default(), &mut rcc)
-            .expect("Failed to constrain serial port");
-        serial.listen(serial::Event::Rxne);
 
         let mut store = EepromStore::new(EepromAdapter::new(i2c, eeprom_delay));
         if store.open().is_err() {

@@ -31,3 +31,16 @@
   ~e7 ~dac 2 #1 wire ~g7 ~d12 2 #2 wire ~g12 ~gnd 2 #3 wire
   3300 2000 do i $dac ! 1 delay loop 
 ;
+
+ ~gnd ~j11 2 #10 wire ~a1 ~3V 2 #11 wire  ~j1 ~a10 2 #12 wire
+
+
+: w 1 #1 wire 1 #2 wire ;
+: u 1 #1 unwire 1 #2 unwire ;
+
+~gnd ~j7 ~j8 ~j9 ~j10 5 #2 wire 
+~gnd ~j11 ~j12 ~j13 ~j14 5 #3 wire 
+~gnd ~a7 ~a8 ~a9 ~a10 5 #4 wire 
+~gnd ~a11 ~a12 ~a13 ~a14 5 #5 wire 
+
+~gnd ~j12 2 #10 wire
